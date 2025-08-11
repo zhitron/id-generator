@@ -13,11 +13,11 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * 表示ULID的类。
+ * 表示ULID（Universally Unique Lexicographically Sortable Identifier）的类。
  * <p>
  * ULID 是一个128位的值，包含两个部分：
  * <ul>
- * <li><b>时间部分</b>: 自1970-01-01（Unix纪元）以来的毫秒数。</li>
+ * <li><b>时间部分</b>: 自1970-01-01（Unix纪元）以来的毫秒数，占48位。</li>
  * <li><b>随机部分</b>: 由安全随机生成器生成的80位随机序列。</li>
  * </ul>
  * <p>
@@ -25,30 +25,33 @@ import java.util.concurrent.ThreadLocalRandom;
  * <p>
  * 此类的实例是<b>不可变的</b>。
  * </p>
+ *
+ * @see <a href="https://github.com/ulid/spec">ULID Specification</a>
  */
 public final class ULID implements Serializable, Comparable<ULID> {
     /**
-     * 全部128位都为0的特殊ULID。
+     * 全部128位都为0的特殊ULID，表示最小可能的ULID值。
      */
     public static final ULID MIN = new ULID(0x0000000000000000L, 0x0000000000000000L);
     /**
-     * 全部128位都为1的特殊ULID。
+     * 全部128位都为1的特殊ULID，表示最大可能的ULID值。
      */
     public static final ULID MAX = new ULID(0xffffffffffffffffL, 0xffffffffffffffffL);
     @Serial
     private static final long serialVersionUID = 1L;
     /**
-     * 字符映射数组，用于快速查找字符对应的数值。
+     * 字符映射数组，用于快速查找字符对应的数值，支持Base32字符集。
+     * 索引为字符的ASCII码，值为对应的数值（0-31），未映射的字符值为-1。
      */
     private static final long[] ALPHABET_VALUES = new long[256];
 
     /**
-     * 大写字母表，用于编码ULID的字符集。
+     * 大写字母表，用于编码ULID的字符集（Crockford's Base 32）。
      */
     private static final char[] ALPHABET_UPPERCASE = "0123456789ABCDEFGHJKMNPQRSTVWXYZ".toCharArray();
 
     /**
-     * 小写字母表，用于编码ULID的字符集。
+     * 小写字母表，用于编码ULID的字符集（Crockford's Base 32）。
      */
     private static final char[] ALPHABET_LOWERCASE = "0123456789abcdefghjkmnpqrstvwxyz".toCharArray();
 
@@ -66,33 +69,31 @@ public final class ULID implements Serializable, Comparable<ULID> {
             ALPHABET_VALUES[ALPHABET_LOWERCASE[i]] = i;
         }
 
-        // 特殊处理字母O、I、L的大写形式（映射到特定值）
+        // 特殊处理易混淆字符，映射到特定值以提高容错性
+        // O/o 映射为 0
         ALPHABET_VALUES['O'] = 0x00;
+        ALPHABET_VALUES['o'] = 0x00;
+        // I/i/L/l 映射为 1
         ALPHABET_VALUES['I'] = 0x01;
         ALPHABET_VALUES['L'] = 0x01;
-
-        // 特殊处理字母o、i、l的小写形式（映射到特定值）
-        ALPHABET_VALUES['o'] = 0x00;
         ALPHABET_VALUES['i'] = 0x01;
         ALPHABET_VALUES['l'] = 0x01;
     }
 
     /**
-     * 最重要的64位（时间戳和部分随机数）
+     * 最重要的64位（Most Significant Bits），包含时间戳的高32位和随机数的高16位。
      */
     private final long msb;
 
     /**
-     * 最不重要的64位（随机数部分）
+     * 最不重要的64位（Least Significant Bits），包含随机数的低64位。
      */
     private final long lsb;
 
     /**
-     * 创建一个新的ULID。
-     * <p>
-     * 用于复制现有的ULID实例。
+     * 创建一个新的ULID，通过复制现有的ULID实例。
      *
-     * @param input 一个ULID
+     * @param input 要复制的ULID实例
      */
     public ULID(ULID input) {
         this.msb = input.msb;
@@ -100,9 +101,9 @@ public final class ULID implements Serializable, Comparable<ULID> {
     }
 
     /**
-     * 将UUID转换为ULID。
+     * 从UUID创建ULID。
      *
-     * @param input 一个UUID
+     * @param input UUID实例
      */
     public ULID(UUID input) {
         this.msb = input.getMostSignificantBits();
@@ -110,9 +111,7 @@ public final class ULID implements Serializable, Comparable<ULID> {
     }
 
     /**
-     * 创建一个新的ULID。
-     * <p>
-     * 如果你想复制一个{@link UUID}，请使用这个构造函数。
+     * 创建一个新的ULID，通过指定最高有效位和最低有效位。
      *
      * @param mostSignificantBits  前8个字节的long值表示
      * @param leastSignificantBits 后8个字节的long值表示
@@ -123,7 +122,7 @@ public final class ULID implements Serializable, Comparable<ULID> {
     }
 
     /**
-     * 创建一个新的ULID。
+     * 创建一个新的ULID，通过指定时间戳和随机字节数组。
      * <p>
      * 时间参数是从1970-01-01（Unix纪元）开始的毫秒数。它必须是一个不超过2^48-1的正数。
      * <p>
@@ -139,14 +138,14 @@ public final class ULID implements Serializable, Comparable<ULID> {
      */
     public ULID(long time, byte[] random) {
 
-        // 时间部分占48位。
+        // 时间部分占48位，检查是否超出范围
         if ((time & 0xffff000000000000L) != 0) {
             // ULID规范：
             // "任何尝试解码或编码超过此限制的ULID（time > 2^48-1）
             // 都应被所有实现拒绝，以防止溢出错误。"
             throw new IllegalArgumentException("无效的时间值"); // 溢出或负时间!
         }
-        // 随机部分占80位（10个字节）。
+        // 随机部分占80位（10个字节），检查长度
         if (random == null || random.length != 10) {
             throw new IllegalArgumentException("无效的随机字节，随机字节长度必须为10"); // 空或长度错误!
         }
@@ -154,10 +153,12 @@ public final class ULID implements Serializable, Comparable<ULID> {
         long msb = 0;
         long lsb = 0;
 
+        // 构造最高有效位：时间戳高32位左移16位，加上随机数前2字节
         msb |= time << 16;
         msb |= (long) (random[0x0] & 0xff) << 8;
         msb |= random[0x1] & 0xff;
 
+        // 构造最低有效位：随机数后8字节
         lsb |= (long) (random[0x2] & 0xff) << 56;
         lsb |= (long) (random[0x3] & 0xff) << 48;
         lsb |= (long) (random[0x4] & 0xff) << 40;
@@ -172,7 +173,7 @@ public final class ULID implements Serializable, Comparable<ULID> {
     }
 
     /**
-     * 使用默认的安全随机数生成器创建一个新的ULID
+     * 使用默认的安全随机数生成器创建一个新的ULID。
      *
      * @return 一个新的ULID实例
      */
@@ -181,22 +182,23 @@ public final class ULID implements Serializable, Comparable<ULID> {
     }
 
     /**
-     * 使用指定的随机数生成器创建一个新的ULID
+     * 使用指定的随机数生成器创建一个新的ULID。
      *
      * @param random 随机数生成器
      * @return 一个新的ULID实例
      */
     public static ULID randomULID(Random random) {
         if (random == null) random = ThreadLocalRandom.current();
+        // 时间戳左移16位，与随机数低16位组合成msb
         long msb = System.currentTimeMillis() << 16 | random.nextLong() & 0xffffL;
-        long lsb = random.nextLong();
+        long lsb = random.nextLong(); // 随机数低64位
         return new ULID(msb, lsb);
     }
 
     /**
-     * 返回指定时间的最小ULID
+     * 返回指定时间的最小ULID。
      * <p>
-     * 时间部分使用指定时间填充，随机部分全部为0
+     * 时间部分使用指定时间填充，随机部分全部为0。
      *
      * @param time 自1970-01-01以来的毫秒数
      * @return 一个新的ULID实例
@@ -207,9 +209,9 @@ public final class ULID implements Serializable, Comparable<ULID> {
     }
 
     /**
-     * 返回指定时间的最大ULID
+     * 返回指定时间的最大ULID。
      * <p>
-     * 时间部分使用指定时间填充，随机部分全部为1
+     * 时间部分使用指定时间填充，随机部分全部为1。
      *
      * @param time 自1970-01-01以来的毫秒数
      * @return 一个新的ULID实例
@@ -220,16 +222,17 @@ public final class ULID implements Serializable, Comparable<ULID> {
     }
 
     /**
-     * 创建ULID的通用方法
+     * 创建ULID的通用方法，支持单调递增ULID生成。
      *
-     * @param time          时间戳
+     * @param time          时间戳（毫秒）
      * @param entropy       随机数生成器
-     * @param useByteRandom 是否使用字节随机数
+     * @param useByteRandom 是否使用字节随机数生成方式
      * @param lastULID      上一个ULID实例（用于生成单调递增ULID）
      * @return 一个新的ULID实例
      */
     public static ULID randomULID(long time, Random entropy, boolean useByteRandom, ULID lastULID) {
         if (lastULID == null) {
+            // 生成新的ULID
             if (useByteRandom) {
                 byte[] bytes = new byte[10];
                 entropy.nextBytes(bytes);
@@ -244,8 +247,10 @@ public final class ULID implements Serializable, Comparable<ULID> {
             // 检查当前时间是否与上一次相同或倒退了（系统时钟调整或闰秒后）
             // 偏移容差 = (上一次时间 - 10秒) < 当前时间 <= 上一次时间
             if ((time > lastTime - 10_000) && (time <= lastTime)) {
+                // 如果在同一毫秒内，递增上一个ULID
                 lastULID = lastULID.increment();
             } else {
+                // 否则生成新的ULID
                 lastULID = ULID.randomULID(time, entropy, useByteRandom, null);
             }
             return lastULID;
@@ -253,9 +258,10 @@ public final class ULID implements Serializable, Comparable<ULID> {
     }
 
     /**
-     * 从字符数组创建ULID
+     * 从字符数组创建ULID。
      *
-     * @param chars 包含ULID的字符数组
+     * @param time  时间戳（毫秒）
+     * @param chars 包含ULID的字符数组（长度为26）
      * @return 一个新的ULID实例
      * @throws IllegalArgumentException 如果输入字符无效
      */
@@ -264,6 +270,7 @@ public final class ULID implements Serializable, Comparable<ULID> {
         long random0 = 0;
         long random1 = 0;
 
+        // 解析随机部分的后16个字符（Base32编码）
         random0 |= ALPHABET_VALUES[chars[0x0a]] << 35;
         random0 |= ALPHABET_VALUES[chars[0x0b]] << 30;
         random0 |= ALPHABET_VALUES[chars[0x0c]] << 25;
@@ -282,6 +289,7 @@ public final class ULID implements Serializable, Comparable<ULID> {
         random1 |= ALPHABET_VALUES[chars[0x18]] << 5;
         random1 |= ALPHABET_VALUES[chars[0x19]];
 
+        // 将解析的随机数转换为字节数组
         byte[] bytes = new byte[10];
 
         bytes[0] = (byte) (random0 >>> 32);
@@ -299,14 +307,14 @@ public final class ULID implements Serializable, Comparable<ULID> {
     }
 
     /**
-     * 创建基于哈希的ULID
+     * 创建基于哈希的ULID。
      *
-     * @param time  时间戳
+     * @param time  时间戳（毫秒）
      * @param bytes 要哈希的字节数组
      * @return 一个新的ULID实例
      */
     public static ULID randomULID(long time, byte[] bytes) {
-        // 计算哈希并取前10个字节
+        // 计算SHA-256哈希并取前10个字节作为随机数
         String algorithm = "SHA-256";
         try {
             byte[] hash = MessageDigest.getInstance(algorithm).digest(bytes);
@@ -318,7 +326,7 @@ public final class ULID implements Serializable, Comparable<ULID> {
     }
 
     /**
-     * 将字节数组转换为ULID
+     * 将16字节数组转换为ULID。
      *
      * @param bytes 包含ULID的16字节数组
      * @return 一个新的ULID实例
@@ -329,6 +337,7 @@ public final class ULID implements Serializable, Comparable<ULID> {
             throw new IllegalArgumentException("Invalid ULID bytes"); // null或长度错误!
         }
         long msb = 0, lsb = 0;
+        // 解析前8字节到msb
         msb |= (bytes[0x0] & 0xffL) << 56;
         msb |= (bytes[0x1] & 0xffL) << 48;
         msb |= (bytes[0x2] & 0xffL) << 40;
@@ -338,6 +347,7 @@ public final class ULID implements Serializable, Comparable<ULID> {
         msb |= (bytes[0x6] & 0xffL) << 8;
         msb |= (bytes[0x7] & 0xffL);
 
+        // 解析后8字节到lsb
         lsb |= (bytes[0x8] & 0xffL) << 56;
         lsb |= (bytes[0x9] & 0xffL) << 48;
         lsb |= (bytes[0xa] & 0xffL) << 40;
@@ -350,34 +360,39 @@ public final class ULID implements Serializable, Comparable<ULID> {
     }
 
     /**
-     * 将标准字符串转换为ULID
+     * 将标准字符串转换为ULID。
      *
-     * @param chars 包含ULID的字符数组
+     * @param chars 包含ULID的字符数组（长度为26）
      * @return 一个新的ULID实例
      * @throws IllegalArgumentException 如果输入字符串无效
      */
     public static ULID randomULID(char[] chars) {
         checkCharArray(chars);
         long random0 = 0, random1 = 0, random2 = 0;
+        // 解析时间部分（前10个字符）
         for (int i = 0; i < 10; i++) random0 |= ALPHABET_VALUES[chars[i]] << (45 - i * 5);
+        // 解析随机部分的前8个字符
         for (int i = 0; i < 8; i++) random1 |= ALPHABET_VALUES[chars[0x0a + i]] << (35 - i * 5);
+        // 解析随机部分的后8个字符
         for (int i = 0; i < 8; i++) random2 |= ALPHABET_VALUES[chars[0x12 + i]] << (35 - i * 5);
+        // 组合成msb和lsb
         long msb = random0 << 16 | (random1 >>> 24), lsb = random1 << 40 | (random2 & 0xffffffffffL);
         return new ULID(msb, lsb);
     }
 
     /**
-     * 检查字符串是否是有效的ULID。
+     * 检查字符数组是否是有效的ULID。
      * <p>
      * 有效的ULID字符串是一串26个字符，来自的Base 32字母表。
      * <p>
-     * 输入字符串的第一个字符必须在0到7之间。
+     * 输入字符串的第一个字符必须在0到7之间（因为时间部分不能超过2^48-1）。
      */
     private static void checkCharArray(final char[] chars) {
         if (chars == null || chars.length != 26) {
             throw new IllegalArgumentException("无效的随机字符，字符长度必须为26"); // 空或长度错误!
         }
 
+        // 检查每个字符是否在Base32字母表中
         for (char c : chars) {
             try {
                 if (ALPHABET_VALUES[c] == -1) {
@@ -407,7 +422,7 @@ public final class ULID implements Serializable, Comparable<ULID> {
      * <p>
      * ULID与{@link UUID}在128位上兼容。
      * <p>
-     * 如果你需要一个符合RFC-4122的UUIDv4，请这样做：{@code Ulid.toRfc4122().toUuid()}。
+     * 如果你需要一个符合RFC-4122的UUIDv4，请使用{@link #toRfc4122()}方法后再调用此方法。
      *
      * @return 一个UUID。
      */
@@ -416,7 +431,7 @@ public final class ULID implements Serializable, Comparable<ULID> {
     }
 
     /**
-     * 将ULID转换为字节数组。
+     * 将ULID转换为16字节的字节数组。
      *
      * @return 一个字节数组。
      */
@@ -442,12 +457,9 @@ public final class ULID implements Serializable, Comparable<ULID> {
     }
 
     /**
-     * 将ULID转换为标准的大写字符串。
+     * 将ULID转换为标准的大写字符串（Crockford's Base 32）。
      * <p>
-     * 输出字符串的长度为26个字符，且仅包含Crockford的Base 32字母表中的字符。
-     * <p>
-     * 如果你需要小写字符串，请使用快捷方法 {@code Ulid#toLowerCase()}，
-     * 而不是使用 {@code Ulid#toString()#toLowerCase()}。
+     * 输出字符串的长度为26个字符，且仅包含Crockford's Base 32字母表中的字符。
      *
      * @return 一个ULID字符串
      * @see <a href="https://www.crockford.com/base32.html">Crockford's Base 32</a>
@@ -460,6 +472,7 @@ public final class ULID implements Serializable, Comparable<ULID> {
         long random0 = ((this.msb & 0xffffL) << 24) | (this.lsb >>> 40);
         long random1 = (this.lsb & 0xffffffffffL);
 
+        // 编码时间部分（10个字符）
         chars[0x00] = ALPHABET_UPPERCASE[(int) (time >>> 45 & 0b11111)];
         chars[0x01] = ALPHABET_UPPERCASE[(int) (time >>> 40 & 0b11111)];
         chars[0x02] = ALPHABET_UPPERCASE[(int) (time >>> 35 & 0b11111)];
@@ -471,6 +484,7 @@ public final class ULID implements Serializable, Comparable<ULID> {
         chars[0x08] = ALPHABET_UPPERCASE[(int) (time >>> 5 & 0b11111)];
         chars[0x09] = ALPHABET_UPPERCASE[(int) (time & 0b11111)];
 
+        // 编码随机部分（16个字符）
         chars[0x0a] = ALPHABET_UPPERCASE[(int) (random0 >>> 35 & 0b11111)];
         chars[0x0b] = ALPHABET_UPPERCASE[(int) (random0 >>> 30 & 0b11111)];
         chars[0x0c] = ALPHABET_UPPERCASE[(int) (random0 >>> 25 & 0b11111)];
@@ -506,9 +520,9 @@ public final class ULID implements Serializable, Comparable<ULID> {
      */
     public ULID toRfc4122() {
 
-        // 设置第7个字节的最高4位为 0, 1, 0, 0
+        // 设置第7个字节的最高4位为 0, 1, 0, 0 (版本4)
         final long msb4 = (this.msb & 0xffffffffffff0fffL) | 0x0000000000004000L; // RFC-4122 版本4
-        // 设置第9个字节的最高2位为 1, 0
+        // 设置第9个字节的最高2位为 1, 0 (变体2)
         final long lsb4 = (this.lsb & 0x3fffffffffffffffL) | 0x8000000000000000L; // RFC-4122 变体2
 
         return new ULID(msb4, lsb4);
@@ -606,6 +620,8 @@ public final class ULID implements Serializable, Comparable<ULID> {
 
     /**
      * 返回ULID的哈希码值。
+     *
+     * @return 哈希码值
      */
     @Override
     public int hashCode() {
@@ -615,6 +631,9 @@ public final class ULID implements Serializable, Comparable<ULID> {
 
     /**
      * 检查另一个ULID是否与此ULID相等。
+     *
+     * @param other 要比较的对象
+     * @return 如果相等返回true，否则返回false
      */
     @Override
     public boolean equals(Object other) {
@@ -639,7 +658,7 @@ public final class ULID implements Serializable, Comparable<ULID> {
     @Override
     public int compareTo(ULID that) {
 
-        // 用于比较无符号长整型
+        // 用于比较无符号长整型，通过加上偏移量将有符号比较转换为无符号比较
         final long min = 0x8000000000000000L;
 
         final long a = this.msb + min;

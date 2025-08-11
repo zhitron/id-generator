@@ -13,6 +13,17 @@ import com.github.zhitron.id_generator.impl.UUIDGenerator;
 public class IDGeneratorFactory {
 
     /**
+     * 私有构造函数，防止实例化。
+     * <p>
+     * 由于这是一个工具类，只提供静态方法，因此不希望外部代码创建该类的实例。
+     * 通过抛出 AssertionError 来明确表示此类不应被实例化。
+     * </p>
+     */
+    private IDGeneratorFactory() {
+        throw new AssertionError("No instances.");
+    }
+
+    /**
      * 创建基于安全随机数的ID生成器。
      *
      * @return RandomIDGenerator 实例

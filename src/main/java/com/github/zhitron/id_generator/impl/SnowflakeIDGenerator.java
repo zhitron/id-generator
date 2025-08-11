@@ -2,6 +2,8 @@ package com.github.zhitron.id_generator.impl;
 
 import com.github.zhitron.id_generator.IDGenerator;
 
+import java.security.MessageDigest;
+
 /**
  * Snowflake ID 生成器实现。
  * 基于时间戳、节点ID和序列号组合生成全局唯一ID。
@@ -16,6 +18,17 @@ public class SnowflakeIDGenerator implements IDGenerator {
 
     // 最大序列号值，用于防止同一毫秒内序列号溢出
     private static final int MAX_SEQUENCE = ~(-1 << SEQUENCE_BITS);
+
+    //MD5 消息摘要实例，用于生成整型ID时的哈希计算。在静态初始化块中进行初始化，确保类加载时即可使用。
+    private static MessageDigest MD5;
+
+    static {
+        try {
+            MD5 = MessageDigest.getInstance("MD5");
+        } catch (Exception e) {
+            e.printStackTrace(System.err);
+        }
+    }
 
     // 起始时间戳（纪元），用于计算相对时间戳
     private final long epoch;
@@ -66,8 +79,10 @@ public class SnowflakeIDGenerator implements IDGenerator {
     @Override
     public int generateNextIntID() throws UnsupportedOperationException {
         try {
-            return Math.toIntExact(this.generateNextLongID());
-        } catch (ArithmeticException e) {
+            long value = this.generateNextLongID();
+            byte[] bytes = MD5.digest(String.valueOf(value).getBytes());
+            return (bytes[0] << 24 | bytes[1] | bytes[2] << 8 | bytes[3]) & Integer.MAX_VALUE;
+        } catch (Exception e) {
             throw new UnsupportedOperationException("The next int ID could not be generated", e);
         }
     }

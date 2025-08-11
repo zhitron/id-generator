@@ -6,7 +6,7 @@
 
     <groupId>io.github.zhitron</groupId>
     <artifactId>id-generator</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <name>ID Generator</name>
     <description>
         A simple and distributed ID generator for generating unique identifiers in a distributed system environment.
